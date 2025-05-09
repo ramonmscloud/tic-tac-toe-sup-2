@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tic Tac Toe - Canvas + Supabase V1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Gris claro de Tailwind */
+        }
+        .player-image {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid transparent;
+            transition: border-color 0.3s;
+            background-color: #e5e7eb;
+        }
+        .player-image.active {
+            border-color: #3b82f6;
+        }
+        .winner-image {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin-right: 8px;
+            vertical-align: middle;
+            display: inline-block;
+        }
+        .hidden {
+            display: none;
+        }
+        #tic-tac-toe-canvas {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4 bg-gradient-to-br from-blue-100 to-purple-100">
+
+    <h1 class="text-3xl sm:text-4xl font-bold text-gray-800 mb-6 text-center">Tic Tac Toe - Remoto (V1 Canvas)</h1>
+
+    <div id="auth-section" class="w-full max-w-lg p-6 bg-white rounded-lg shadow-md mb-6 text-center">
+        <h2 class="text-xl font-semibold text-gray-700 mb-4">Autenticación y Partida</h2>
+        <div id="user-status" class="mb-2">No autenticado</div>
+        <input type="email" id="email-input" placeholder="Tu correo electrónico" class="border border-gray-300 p-2 rounded-md w-full mb-2">
+        <input type="password" id="password-input" placeholder="Contraseña" type="password" class="border border-gray-300 p-2 rounded-md w-full mb-2">
+        <div class="flex space-x-2 mb-4">
+            <button id="signup-button" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-md">Registrarse</button>
+            <button id="login-button" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md">Iniciar Sesión</button>
+            <button id="logout-button" class="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-md hidden">Cerrar Sesión</button>
+        </div>
+        <hr class="my-4">
+        <input type="text" id="game-id-input" placeholder="ID de Partida (opcional, para unirse/cargar)" class="border border-gray-300 p-2 rounded-md w-full mb-2">
+        <button id="create-load-game-button" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50" disabled>
+            Crear Nueva Partida / Cargar Partida
+        </button>
+        <p id="game-link-message" class="mt-2 text-sm text-gray-600"></p>
+    </div>
+
+    <div id="game-section" class="hidden w-full max-w-md flex flex-col items-center">
+        <div id="player-turn" class="flex items-center justify-center space-x-4 mb-4 p-3 bg-white rounded-lg shadow">
+            <img id="current-player-image" src="" alt="Imagen del jugador actual" class="player-image active">
+            <p class="text-lg font-semibold text-gray-700">Turno de: <span id="current-player-name" class="font-bold"></span></p>
+        </div>
+
+        <canvas id="tic-tac-toe-canvas" width="306" height="306" class="mb-4 bg-white rounded-lg shadow-inner border-2 border-gray-300"></canvas>
+
+        <div id="status-message-container" class="flex items-center justify-center text-xl font-semibold text-center text-gray-800 mb-4 h-8">
+             <span id="status-message"></span>
+        </div>
+
+        <div class="flex space-x-4">
+             <button id="reset-button" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200">
+                 Reiniciar Partida
+             </button>
+             <button id="change-players-button" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200">
+                 Nueva Partida / Salir
+             </button>
+        </div>
+    </div>
+
+<script>
+    // --- Supabase ---
+    const SUPABASE_URL = 'TU_SUPABASE_URL'; // <<<========= REEMPLAZA ESTO
+    const SUPABASE_ANON_KEY = 'TU_SUPABASE_ANON_KEY'; // <<<===== REEMPLAZA ESTO
+    let supabase = null;
+    let currentUser = null;
+    let currentGameId = null;
+    let currentGameData = null;
+
+    // --- DOM Elements ---
+    const authSection = document.getElementById('auth-section');
+    const userStatusElement = document.getElementById('user-status');
+    const emailInput = document.getElementById('email-input');
+    const passwordInput = document.getElementById('password-input');
+    const signupButton = document.getElementById('signup-button');
+    const loginButton = document.getElementById('login-button');
+    const logoutButton = document.getElementById('logout-button');
+    const gameIdInput = document.getElementById('game-id-input');
+    const createLoadGameButton = document.getElementById('create-load-game-button');
+    const gameLinkMessage = document.getElementById('game-link-message');
+
+    const gameSection = document.getElementById('game-section');
+    const playerTurnElement = document.getElementById('player-turn');
+    const currentPlayerImage = document.getElementById('current-player-image');
+    const currentPlayerName = document.getElementById('current-player-name');
+    const statusMessageContainer = document.getElementById('status-message-container');
+    let statusMessageSpan = document.getElementById('status-message'); // Será re-obtenido
+    const resetButton = document.getElementById('reset-button');
+    const changePlayersButton = document.getElementById('change-players-button');
+
+    // --- Canvas Variables ---
+    let canvas = null;
+    let ctx = null;
+    const CANVAS_WIDTH = 306;
+    const CANVAS_HEIGHT = 306;
+    const NUM_CELLS_PER_ROW = 3;
+    const CELL_SIZE = 100;
+    const LINE_THICKNESS = 2; // Grosor de líneas de la cuadrícula
+    const GRID_COLOR = '#e5e7eb';
+    const SYMBOL_COLOR_X = '#3b82f6';
+    const SYMBOL_COLOR_O = '#ef4444';
+    const WINNING_LINE_COLOR = '#10b981';
+    const WINNING_LINE_THICKNESS = 5;
+
+    // --- Game State ---
+    let board = ['', '', '', '', '', '', '', '', '']; // Sigue siendo útil para la lógica y el estado local rápido
+    let currentPlayerIndex = 0;
+    let isGameOver = false;
+    const DEFAULT_IMAGE_URL = 'https://placehold.co/60x60/cccccc/ffffff?text=?';
+    const winningCombinations = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],
+        [0, 4, 8], [2, 4, 6]
+    ];
+
+    // --- Supabase Functions ---
+    function initializeSupabase() {
+        if (!SUPABASE_URL || SUPABASE_URL === 'TU_SUPABASE_URL' || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'TU_SUPABASE_ANON_KEY') {
+            console.error("Supabase URL o Anon Key no configuradas. Reemplaza los placeholders.");
+            alert("Error de configuración: Faltan las credenciales de Supabase. Revisa el código y reemplaza TU_SUPABASE_URL y TU_SUPABASE_ANON_KEY.");
+            return false;
+        }
+        try {
+            supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            return true;
+        } catch (error) {
+            console.error("Error inicializando Supabase Client:", error);
+            return false;
+        }
+    }
+
+    async function checkUserSession() {
+        if (!supabase) return;
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+            currentUser = session.user;
+            userStatusElement.textContent = `Autenticado: ${currentUser.email.split('@')[0]}`;
+            emailInput.classList.add('hidden');
+            passwordInput.classList.add('hidden');
+            signupButton.classList.add('hidden');
+            loginButton.classList.add('hidden');
+            logoutButton.classList.remove('hidden');
+            createLoadGameButton.disabled = false;
+        } else {
+            currentUser = null;
+            userStatusElement.textContent = 'No autenticado';
+            emailInput.classList.remove('hidden');
+            passwordInput.classList.remove('hidden');
+            signupButton.classList.remove('hidden');
+            loginButton.classList.remove('hidden');
+            logoutButton.classList.add('hidden');
+            createLoadGameButton.disabled = true;
+            showAuthSection(); // Asegura que la UI esté correcta
+        }
+    }
+
+    async function handleSignUp() { /* ... (como en V1 anterior) ... */
+        if (!supabase) return;
+        const email = emailInput.value;
+        const password = passwordInput.value;
+        if (!email || !password) { alert("Email y contraseña son requeridos."); return; }
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) alert(`Error registro: ${error.message}`);
+        else alert('Registro exitoso. Revisa tu email para confirmar (si aplica) y luego inicia sesión.');
+    }
+
+    async function handleSignIn() { /* ... (como en V1 anterior) ... */
+        if (!supabase) return;
+        const email = emailInput.value;
+        const password = passwordInput.value;
+        if (!email || !password) { alert("Email y contraseña son requeridos."); return; }
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) alert(`Error inicio de sesión: ${error.message}`);
+        else {
+            currentUser = data.user;
+            await checkUserSession();
+            // Intentar cargar partida desde URL si existe y está autenticado
+            const urlParams = new URLSearchParams(window.location.search);
+            const gameIdFromUrl = urlParams.get('game');
+            if (gameIdFromUrl && createLoadGameButton && !createLoadGameButton.disabled) {
+                gameIdInput.value = gameIdFromUrl; // Ponerlo en el input
+                await loadOrCreateGame(); // Intentar cargarla
+            }
+        }
+    }
+    async function handleSignOut() { /* ... (como en V1 anterior) ... */
+        if (!supabase) return;
+        const { error } = await supabase.auth.signOut();
+        if (error) alert(`Error cerrando sesión: ${error.message}`);
+        else {
+            currentUser = null;
+            currentGameId = null;
+            currentGameData = null;
+            await checkUserSession();
+            showAuthSection();
+        }
+    }
+
+    async function createNewGameOnSupabase() { /* ... (ligeramente adaptado) ... */
+        if (!supabase || !currentUser) return null;
+        const initialPlayer = {
+            user_id: currentUser.id,
+            name: currentUser.email.split('@')[0] || `JugadorX`,
+            symbol: 'X',
+            imageUrl: DEFAULT_IMAGE_URL
+        };
+        const newGame = {
+            board: ['', '', '', '', '', '', '', '', ''],
+            current_player_index: 0,
+            players: [initialPlayer],
+            is_game_over: false,
+            winner_index: null,
+            winning_combination: null,
+        };
+        const { data, error } = await supabase.from('games').insert([newGame]).select().single();
+        if (error) { console.error('Error creando partida:', error); alert(`Error creando partida: ${error.message}`); return null; }
+        return data;
+    }
+
+    async function fetchGameFromSupabase(gameId) { /* ... (como en V1 anterior) ... */
+        if (!supabase) return null;
+        const { data, error } = await supabase.from('games').select('*').eq('id', gameId).single();
+        if (error) {
+            if (error.code !== 'PGRST116') alert(`Error cargando partida: ${error.message}`); // PGRST116 es "no rows"
+            return null;
+        }
+        return data;
+    }
+
+    async function updateGameOnSupabase(gameId, updates) { /* ... (como en V1 anterior) ... */
+        if (!supabase || !gameId) return null;
+        const { data, error } = await supabase.from('games').update(updates).eq('id', gameId).select().single();
+        if (error) { console.error('Error actualizando partida:', error); alert(`Error actualizando: ${error.message}`); return null; }
+        return data;
+    }
+
+
+    // --- Canvas Drawing Functions ---
+    function initializeCanvasAndBoard() {
+        canvas = document.getElementById('tic-tac-toe-canvas');
+        if (!canvas) { console.error("Canvas element not found!"); return false; }
+        ctx = canvas.getContext('2d');
+        if (!ctx) { console.error("2D context not available!"); return false; }
+        
+        canvas.width = CANVAS_WIDTH; // Ancho total incluyendo líneas
+        canvas.height = CANVAS_HEIGHT;
+
+        drawBoardGrid();
+        drawSymbols(); // Dibuja los símbolos actuales del tablero
+        if (isGameOver && currentGameData && currentGameData.winning_combination) {
+            drawWinningLine(currentGameData.winning_combination);
+        }
+        canvas.removeEventListener('click', handleCanvasClick); // Limpiar listener anterior
+        canvas.addEventListener('click', handleCanvasClick);
+        return true;
+    }
+    
+    function getCellOffset(index) {
+        const row = Math.floor(index / NUM_CELLS_PER_ROW);
+        const col = index % NUM_CELLS_PER_ROW;
+        // Cada celda es CELL_SIZE, y hay LINE_THICKNESS entre ellas
+        const x = col * (CELL_SIZE + LINE_THICKNESS);
+        const y = row * (CELL_SIZE + LINE_THICKNESS);
+        return { x, y };
+    }
+
+    function drawBoardGrid() {
+        if (!ctx) return;
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        ctx.fillStyle = 'white'; // Fondo del canvas si no está en CSS
+        ctx.fillRect(0,0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        ctx.strokeStyle = GRID_COLOR;
+        ctx.lineWidth = LINE_THICKNESS;
+
+        // Dibujar la cuadrícula. CELL_SIZE es el tamaño de la celda jugable.
+        // Las líneas se dibujan *después* de cada celda (excepto la última)
+        for (let i = 1; i < NUM_CELLS_PER_ROW; i++) {
+            // Líneas verticales
+            ctx.beginPath();
+            ctx.moveTo(i * CELL_SIZE + (i - 1) * LINE_THICKNESS + LINE_THICKNESS / 2, 0);
+            ctx.lineTo(i * CELL_SIZE + (i - 1) * LINE_THICKNESS + LINE_THICKNESS / 2, CANVAS_HEIGHT);
+            ctx.stroke();
+
+            // Líneas horizontales
+            ctx.beginPath();
+            ctx.moveTo(0, i * CELL_SIZE + (i - 1) * LINE_THICKNESS + LINE_THICKNESS / 2);
+            ctx.lineTo(CANVAS_WIDTH, i * CELL_SIZE + (i - 1) * LINE_THICKNESS + LINE_THICKNESS / 2);
+            ctx.stroke();
+        }
+    }
+
+    function drawSymbols() {
+        if (!ctx || !board) return;
+        const symbolPadding = CELL_SIZE * 0.2; // Espacio desde el borde de la celda
+
+        for (let i = 0; i < board.length; i++) {
+            const symbol = board[i];
+            if (symbol === '') continue;
+
+            const { x: cellX, y: cellY } = getCellOffset(i);
+            
+            ctx.lineWidth = CELL_SIZE * 0.08; // Grosor de X y O
+            ctx.lineCap = 'round';
+
+            if (symbol === 'X') {
+                ctx.strokeStyle = SYMBOL_COLOR_X;
+                ctx.beginPath();
+                ctx.moveTo(cellX + symbolPadding, cellY + symbolPadding);
+                ctx.lineTo(cellX + CELL_SIZE - symbolPadding, cellY + CELL_SIZE - symbolPadding);
+                ctx.moveTo(cellX + CELL_SIZE - symbolPadding, cellY + symbolPadding);
+                ctx.lineTo(cellX + symbolPadding, cellY + CELL_SIZE - symbolPadding);
+                ctx.stroke();
+            } else if (symbol === 'O') {
+                ctx.strokeStyle = SYMBOL_COLOR_O;
+                ctx.beginPath();
+                ctx.arc(
+                    cellX + CELL_SIZE / 2,
+                    cellY + CELL_SIZE / 2,
+                    CELL_SIZE / 2 - symbolPadding,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.stroke();
+            }
+        }
+    }
+
+    function drawWinningLine(combination) {
+        if (!ctx || !combination || combination.length !== 3) return;
+
+        const { x: startXOffset, y: startYOffset } = getCellOffset(combination[0]);
+        const { x: endXOffset, y: endYOffset } = getCellOffset(combination[2]);
+        
+        const halfCell = CELL_SIZE / 2;
+
+        ctx.strokeStyle = WINNING_LINE_COLOR;
+        ctx.lineWidth = WINNING_LINE_THICKNESS;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(startXOffset + halfCell, startYOffset + halfCell);
+        ctx.lineTo(endXOffset + halfCell, endYOffset + halfCell);
+        ctx.stroke();
+    }
+
+
+    // --- Game Logic Functions ---
+    async function initializeAndDisplayGame(gameData) {
+        if (!gameData) {
+            alert("No se pudieron obtener los datos de la partida.");
+            showAuthSection();
+            return;
+        }
+
+        currentGameId = gameData.id;
+        currentGameData = gameData;
+        board = [...gameData.board];
+        currentPlayerIndex = gameData.current_player_index;
+        isGameOver = gameData.is_game_over;
+
+        authSection.classList.add('hidden');
+        gameSection.classList.remove('hidden');
+
+        statusMessageContainer.innerHTML = '<span id="status-message"></span>';
+        statusMessageSpan = document.getElementById('status-message');
+
+        if (!initializeCanvasAndBoard()) return; // Inicializa canvas, dibuja cuadrícula y símbolos
+
+        if (isGameOver) {
+            displayEndGameMessage(); // Muestra mensaje y dibuja línea ganadora
+        } else {
+            updatePlayerTurnDisplay();
+        }
+
+        if (currentGameId) {
+             gameLinkMessage.textContent = `ID Partida: ${currentGameId}. Comparte este ID o el enlace: ${window.location.origin}${window.location.pathname}?game=${currentGameId}`;
+        }
+    }
+
+    async function handleCanvasClick(event) {
+        if (isGameOver || !currentGameData || !currentUser || !ctx) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (event.clientX - rect.left) * scaleX;
+        const y = (event.clientY - rect.top) * scaleY;
+
+        // Determinar la celda clickeada
+        let clickedCol = -1, clickedRow = -1;
+        for (let c = 0; c < NUM_CELLS_PER_ROW; c++) {
+            const cellStartX = c * (CELL_SIZE + LINE_THICKNESS);
+            if (x >= cellStartX && x < cellStartX + CELL_SIZE) {
+                clickedCol = c;
+                break;
+            }
+        }
+        for (let r = 0; r < NUM_CELLS_PER_ROW; r++) {
+            const cellStartY = r * (CELL_SIZE + LINE_THICKNESS);
+            if (y >= cellStartY && y < cellStartY + CELL_SIZE) {
+                clickedRow = r;
+                break;
+            }
+        }
+        
+        if (clickedCol === -1 || clickedRow === -1) return; // Clic fuera de una celda jugable
+
+        const cellIndex = clickedRow * NUM_CELLS_PER_ROW + clickedCol;
+
+        // Verificar turno
+        const currentPlayerFromGameData = currentGameData.players[currentGameData.current_player_index];
+        if (!currentPlayerFromGameData || currentPlayerFromGameData.user_id !== currentUser.id) {
+            alert("No es tu turno o no eres un jugador activo en esta partida.");
+            return;
+        }
+        if (currentGameData.players.length < 2 && currentPlayerFromGameData.symbol === 'X' && currentGameData.current_player_index === 1) {
+            // Esto no debería pasar si el jugador O no se ha unido, pero como chequeo extra
+             alert("Esperando al jugador O.");
+             return;
+        }
+         if (currentGameData.players.length < 2 && currentPlayerFromGameData.user_id !== currentGameData.players[0].user_id) {
+             alert("Esperando que se una el segundo jugador.");
+             return;
+         }
+
+
+        if (board[cellIndex] !== '') return; // Celda ya ocupada
+
+        const symbolToPlace = currentPlayerFromGameData.symbol;
+        board[cellIndex] = symbolToPlace; // Actualizar tablero local
+        drawSymbols(); // Redibujar símbolos
+
+        let gameEnded = false;
+        let newWinnerIndex = null;
+        let newWinningCombination = null;
+
+        if (checkWin(symbolToPlace)) {
+            isGameOver = true;
+            gameEnded = true;
+            newWinnerIndex = currentGameData.current_player_index;
+            winningCombinations.forEach(combination => {
+                if (combination.every(index => board[index] === symbolToPlace)) {
+                    newWinningCombination = combination;
+                }
+            });
+            if (newWinningCombination) drawWinningLine(newWinningCombination);
+        } else if (board.every(cell => cell !== '')) {
+            isGameOver = true;
+            gameEnded = true;
+        }
+
+        const nextPlayerIndex = gameEnded ? currentGameData.current_player_index : (1 - currentGameData.current_player_index);
+
+        const updates = {
+            board: board,
+            current_player_index: nextPlayerIndex,
+            is_game_over: isGameOver,
+            winner_index: newWinnerIndex,
+            winning_combination: newWinningCombination,
+        };
+
+        const updatedGame = await updateGameOnSupabase(currentGameId, updates);
+        if (updatedGame) {
+            currentGameData = updatedGame;
+            board = [...updatedGame.board]; // Sincronizar tablero local
+            currentPlayerIndex = updatedGame.current_player_index;
+            isGameOver = updatedGame.is_game_over;
+
+            if (isGameOver) {
+                displayEndGameMessage();
+            } else {
+                updatePlayerTurnDisplay();
+            }
+        } else {
+            alert("Error guardando el movimiento. Intenta de nuevo.");
+            board[cellIndex] = ''; // Revertir movimiento local
+            isGameOver = false; // Revertir estado
+            drawBoardGrid(); // Redibujar tablero limpio
+            drawSymbols(); // Redibujar símbolos sin el último movimiento
+        }
+    }
+    
+    function updatePlayerTurnDisplay() { /* ... (como en V1 anterior, usando currentGameData) ... */
+        if (!currentGameData || currentGameData.players.length === 0 || isGameOver) {
+            playerTurnElement.classList.add('hidden');
+            return;
+        }
+        playerTurnElement.classList.remove('hidden');
+        const playerInfo = currentGameData.players[currentGameData.current_player_index];
+        if (!playerInfo) {
+            currentPlayerName.textContent = "Desconocido";
+            currentPlayerImage.src = DEFAULT_IMAGE_URL;
+            return;
+        }
+        currentPlayerName.textContent = playerInfo.name || `Jugador ${playerInfo.symbol}`;
+        currentPlayerImage.src = playerInfo.imageUrl || DEFAULT_IMAGE_URL;
+        currentPlayerImage.alt = `Imagen de ${playerInfo.name || 'Jugador'}`;
+        currentPlayerImage.onerror = function() { this.src = DEFAULT_IMAGE_URL; };
+        document.querySelectorAll('.player-image.active').forEach(img => img.classList.remove('active'));
+        currentPlayerImage.classList.add('active');
+    }
+
+    function displayEndGameMessage() { /* ... (como en V1 anterior, usando currentGameData) ... */
+        statusMessageContainer.innerHTML = ''; // Limpiar
+        statusMessageSpan = document.createElement('span'); // Crear nuevo span
+        statusMessageContainer.appendChild(statusMessageSpan);
+
+        playerTurnElement.classList.add('hidden');
+
+        if (currentGameData && currentGameData.is_game_over) {
+            if (currentGameData.winner_index !== null && currentGameData.players[currentGameData.winner_index]) {
+                const winner = currentGameData.players[currentGameData.winner_index];
+                const winnerImg = document.createElement('img');
+                winnerImg.src = winner.imageUrl || DEFAULT_IMAGE_URL;
+                winnerImg.alt = `Icono de ${winner.name}`;
+                winnerImg.classList.add('winner-image');
+                statusMessageContainer.insertBefore(winnerImg, statusMessageSpan); // Poner imagen antes del texto
+                statusMessageSpan.textContent = `¡${winner.name} (${winner.symbol}) ha ganado!`;
+                // La línea ganadora ya debería estar dibujada por checkWin/handleCanvasClick
+            } else {
+                statusMessageSpan.textContent = '¡Es un empate!';
+            }
+        }
+    }
+
+    function checkWin(symbol) {
+        let winningCombinationFound = null;
+        const hasWon = winningCombinations.some(combination => {
+            const win = combination.every(index => board[index] === symbol);
+            if (win) winningCombinationFound = combination;
+            return win;
+        });
+        // En canvas, la línea se dibuja cuando se detecta el fin del juego.
+        // Aquí solo devolvemos si ganó o no.
+        return hasWon;
+    }
+
+    async function resetGame() {
+        if (currentGameId) {
+            alert("Esta función recargará el estado actual de la partida desde el servidor. Para un reinicio completo, crea una nueva partida.");
+            const gameData = await fetchGameFromSupabase(currentGameId);
+            if (gameData) {
+                 initializeAndDisplayGame(gameData);
+            } else {
+                showAuthSection();
+            }
+        } else {
+            showAuthSection();
+        }
+    }
+
+    function showAuthSection() {
+        authSection.classList.remove('hidden');
+        gameSection.classList.add('hidden');
+        gameLinkMessage.textContent = '';
+        currentGameId = null;
+        currentGameData = null;
+        // No es necesario llamar a checkUserSession aquí, se maneja al inicio y en logout/login
+    }
+
+    async function loadOrCreateGame() {
+        const gameIdToLoad = gameIdInput.value.trim();
+        if (gameIdToLoad) {
+            const gameData = await fetchGameFromSupabase(gameIdToLoad);
+            if (gameData) {
+                if (gameData.players.length === 1 && gameData.players[0].user_id !== currentUser.id) {
+                    // Unirse como jugador 2
+                    const player2 = {
+                        user_id: currentUser.id,
+                        name: currentUser.email.split('@')[0] || `JugadorO`,
+                        symbol: 'O',
+                        imageUrl: DEFAULT_IMAGE_URL
+                    };
+                    const updatedPlayers = [...gameData.players, player2];
+                    // Asegurarse de que el current_player_index sea 0 si el P1 acaba de crear y P2 se une.
+                    const updates = { players: updatedPlayers, current_player_index: gameData.current_player_index };
+                    const updatedGame = await updateGameOnSupabase(gameData.id, updates);
+                    if (updatedGame) initializeAndDisplayGame(updatedGame);
+                    else alert("No se pudo unir a la partida como jugador 2.");
+                } else if (gameData.players.some(p => p.user_id === currentUser.id) || gameData.players.length >= 2) {
+                    initializeAndDisplayGame(gameData); // Ya es parte o partida llena (espectador)
+                } else {
+                     alert("Error al intentar unirse/cargar la partida.");
+                }
+            } else {
+                alert(`No se encontró partida con ID: ${gameIdToLoad}. Puedes crear una nueva.`);
+                gameIdInput.value = '';
+            }
+        } else { // Crear nueva partida
+            const newGame = await createNewGameOnSupabase();
+            if (newGame) {
+                initializeAndDisplayGame(newGame);
+                gameIdInput.value = newGame.id;
+            }
+        }
+    }
+
+    // --- Initialization ---
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!initializeSupabase()) return;
+        
+        checkUserSession(); // También manejará la carga desde URL si el usuario ya está autenticado
+
+        if (signupButton) signupButton.addEventListener('click', handleSignUp);
+        if (loginButton) loginButton.addEventListener('click', handleSignIn);
+        if (logoutButton) logoutButton.addEventListener('click', handleSignOut);
+        if (createLoadGameButton) createLoadGameButton.addEventListener('click', loadOrCreateGame);
+        if (resetButton) resetButton.addEventListener('click', resetGame);
+        if (changePlayersButton) changePlayersButton.addEventListener('click', showAuthSection);
+
+        // Cargar partida desde URL si existe el parámetro ?game=GAME_ID
+        // Se maneja dentro de handleSignIn y checkUserSession si es necesario, después de la autenticación
+        const urlParams = new URLSearchParams(window.location.search);
+        const gameIdFromUrl = urlParams.get('game');
+        if (gameIdFromUrl) {
+            gameIdInput.value = gameIdFromUrl; // Ponerlo en el input para que el usuario pueda cargarla
+            // No auto-cargar aquí si el usuario no está logueado. Se hará en checkUserSession o signIn.
+        }
+        supabase.auth.onAuthStateChange(async (event, session) => {
+            console.log("Auth state changed:", event, session);
+            await checkUserSession(); // Revalida la sesión y actualiza la UI
+            if (event === "SIGNED_IN" && session) {
+                const urlParams = new URLSearchParams(window.location.search);
+                const gameIdFromUrlOnSignIn = urlParams.get('game');
+                 // Solo intentar cargar si aún no hay una partida activa y hay un gameId en la URL
+                if (gameIdFromUrlOnSignIn && !currentGameId && createLoadGameButton && !createLoadGameButton.disabled) {
+                    console.log("Intentando cargar partida desde URL tras SIGNED_IN...");
+                    gameIdInput.value = gameIdFromUrlOnSignIn;
+                    await loadOrCreateGame();
+                }
+            } else if (event === "SIGNED_OUT") {
+                showAuthSection();
+            }
+        });
+    });
+</script>
+
+</body>
+</html>
