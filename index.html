@@ -118,7 +118,7 @@
     const createLoadGameButton = document.getElementById('create-load-game-button');
     const gameLinkMessage = document.getElementById('game-link-message');
     const openGamesListElement = document.getElementById('open-games-list');
-    let noOpenGamesMessage = document.getElementById('no-open-games'); // Can be re-assigned
+    let noOpenGamesMessage = document.getElementById('no-open-games'); 
 
     const gameSection = document.getElementById('game-section');
     const playerTurnElement = document.getElementById('player-turn');
@@ -163,6 +163,7 @@
         }
         try {
             supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            console.log("Supabase client initialized successfully."); // DEBUG
             return true;
         } catch (error) {
             console.error("Error inicializando Supabase Client:", error);
@@ -172,10 +173,25 @@
     }
 
     async function checkUserSession() {
-        if (!supabaseClient) return;
-        const { data: { session } } = await supabaseClient.auth.getSession();
-        if (session) {
+        console.log("checkUserSession called."); // DEBUG
+        if (!supabaseClient) {
+            console.error("supabaseClient is null in checkUserSession."); // DEBUG
+            return;
+        }
+        const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+        
+        if (sessionError) {
+            console.error("Error getting session:", sessionError); // DEBUG
+            currentUser = null;
+        } else if (session) {
+            console.log("Session found:", session.user.email); // DEBUG
             currentUser = session.user;
+        } else {
+            console.log("No active session found."); // DEBUG
+            currentUser = null;
+        }
+
+        if (currentUser) {
             userStatusElement.textContent = `Autenticado: ${currentUser.email.split('@')[0]}`;
             emailInput.classList.add('hidden');
             passwordInput.classList.add('hidden');
@@ -183,9 +199,9 @@
             loginButton.classList.add('hidden');
             logoutButton.classList.remove('hidden');
             createLoadGameButton.disabled = false;
-            await fetchAndDisplayOpenGames(); // Actualizar lista de partidas abiertas
+            console.log("User is authenticated, createLoadGameButton enabled."); // DEBUG
+            await fetchAndDisplayOpenGames();
         } else {
-            currentUser = null;
             userStatusElement.textContent = 'No autenticado';
             emailInput.classList.remove('hidden');
             passwordInput.classList.remove('hidden');
@@ -193,10 +209,11 @@
             loginButton.classList.remove('hidden');
             logoutButton.classList.add('hidden');
             createLoadGameButton.disabled = true;
+            console.log("User is not authenticated, createLoadGameButton disabled."); // DEBUG
             openGamesListElement.innerHTML = '<p id="no-open-games" class="text-gray-500 text-center">Autentícate para ver partidas.</p>';
             noOpenGamesMessage = document.getElementById('no-open-games');
             if(noOpenGamesMessage) noOpenGamesMessage.classList.remove('hidden');
-            showAuthSection();
+            showAuthSection(); // Llama a showAuthSection si no hay usuario y no estamos ya en la sección de auth
         }
     }
 
@@ -216,36 +233,34 @@
         const password = passwordInput.value;
         if (!email || !password) { alert("Email y contraseña son requeridos."); return; }
         const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-        if (error) alert(`Error inicio de sesión: ${error.message}`);
-        else {
-            // currentUser se setea en onAuthStateChange o checkUserSession
-            // await checkUserSession(); // Ya se llama por onAuthStateChange
-            const urlParams = new URLSearchParams(window.location.search);
-            const gameIdFromUrl = urlParams.get('game');
-            if (gameIdFromUrl && createLoadGameButton && !createLoadGameButton.disabled) {
-                gameIdInput.value = gameIdFromUrl;
-                await loadOrCreateGame();
-            }
+        if (error) {
+            alert(`Error inicio de sesión: ${error.message}`);
         }
+        // No es necesario hacer más aquí, onAuthStateChange se encargará
     }
+
     async function handleSignOut() {
         if (!supabaseClient) return;
         const { error } = await supabaseClient.auth.signOut();
-        if (error) alert(`Error cerrando sesión: ${error.message}`);
-        // currentUser se setea en onAuthStateChange o checkUserSession
-        // await checkUserSession(); // Ya se llama por onAuthStateChange
-        // showAuthSection(); // Ya se llama por onAuthStateChange -> checkUserSession
+        if (error) {
+             alert(`Error cerrando sesión: ${error.message}`);
+        }
+        // No es necesario hacer más aquí, onAuthStateChange se encargará
     }
 
     async function createNewGameOnSupabase() {
-        if (!supabaseClient || !currentUser) return null;
+        console.log("createNewGameOnSupabase called."); // DEBUG
+        if (!supabaseClient || !currentUser) {
+            console.error("supabaseClient or currentUser is null in createNewGameOnSupabase. SupabaseClient:", supabaseClient, "CurrentUser:", currentUser); // DEBUG
+            return null;
+        }
         const initialPlayer = {
             user_id: currentUser.id,
             name: currentUser.email.split('@')[0] || `JugadorX`,
             symbol: 'X',
             imageUrl: DEFAULT_IMAGE_URL
         };
-        const newGame = {
+        const newGameData = {
             board: ['', '', '', '', '', '', '', '', ''],
             current_player_index: 0,
             players: [initialPlayer],
@@ -253,10 +268,19 @@
             winner_index: null,
             winning_combination: null,
         };
-        const { data, error } = await supabaseClient.from('games').insert([newGame]).select().single();
-        if (error) { console.error('Error creando partida:', error); alert(`Error creando partida: ${error.message}`); return null; }
+        console.log("Attempting to insert new game data:", newGameData); // DEBUG
+
+        const { data, error } = await supabaseClient.from('games').insert([newGameData]).select().single();
+        
+        if (error) {
+            console.error('Error creando partida en Supabase:', error); // DEBUG
+            alert(`Error creando partida: ${error.message} (Revisa tus políticas RLS para la tabla 'games')`); 
+            return null;
+        }
+        console.log("Game created in Supabase, data:", data); // DEBUG
         return data;
     }
+
 
     async function fetchGameFromSupabase(gameId) {
         if (!supabaseClient) return null;
@@ -276,17 +300,15 @@
     }
 
     async function fetchAndDisplayOpenGames() {
+        console.log("fetchAndDisplayOpenGames called."); // DEBUG
         if (!supabaseClient || !currentUser) {
+            console.log("Cannot fetch open games, client or user not ready. CurrentUser:", currentUser); // DEBUG
             openGamesListElement.innerHTML = '<p id="no-open-games" class="text-gray-500 text-center">Autentícate para ver partidas.</p>';
             noOpenGamesMessage = document.getElementById('no-open-games');
             if(noOpenGamesMessage) noOpenGamesMessage.classList.remove('hidden');
             return;
         }
 
-        // Usaremos la versión con filtrado en cliente por simplicidad, pero RPC es mejor para producción.
-        // Si tienes la función RPC 'get_open_games' creada en tu base de datos:
-        // const { data: openGames, error } = await supabaseClient.rpc('get_open_games', { current_user_id: currentUser.id });
-        // Si no, filtramos en cliente:
         const { data: games, error } = await supabaseClient
             .from('games')
             .select('id, players, created_at')
@@ -305,6 +327,7 @@
             game.players.length === 1 &&
             game.players[0].user_id !== currentUser.id
         );
+        console.log("Fetched open games:", openGames.length); // DEBUG
 
         openGamesListElement.innerHTML = ''; 
 
@@ -317,7 +340,7 @@
             noOpenGamesMessage = p;
         } else {
             if (noOpenGamesMessage) noOpenGamesMessage.classList.add('hidden');
-            noOpenGamesMessage = null; // Ya no existe el mensaje "no hay partidas"
+            noOpenGamesMessage = null;
             const ul = document.createElement('ul');
             ul.className = 'space-y-2';
             openGames.forEach(game => {
@@ -336,19 +359,18 @@
 
                 const joinButton = document.createElement('button');
                 joinButton.textContent = 'Unirse';
-                joinButton.className = 'bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold py-1 px-3 rounded-md pointer-events-none'; // pointer-events-none porque el li es clickable
+                joinButton.className = 'bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold py-1 px-3 rounded-md pointer-events-none';
 
                 li.appendChild(gameInfo);
-                li.appendChild(joinButton); // Botón es más visual
+                li.appendChild(joinButton);
                 ul.appendChild(li);
             });
             openGamesListElement.appendChild(ul);
         }
     }
 
-
-    // --- Canvas Drawing Functions ---
     function initializeCanvasAndBoard() {
+        // ... (sin cambios)
         canvas = document.getElementById('tic-tac-toe-canvas');
         if (!canvas) { console.error("Canvas element not found!"); return false; }
         ctx = canvas.getContext('2d');
@@ -367,7 +389,7 @@
         return true;
     }
     
-    function getCellOffset(index) {
+    function getCellOffset(index) { // ... (sin cambios)
         const row = Math.floor(index / NUM_CELLS_PER_ROW);
         const col = index % NUM_CELLS_PER_ROW;
         const x = col * (CELL_SIZE + LINE_THICKNESS);
@@ -375,7 +397,7 @@
         return { x, y };
     }
 
-    function drawBoardGrid() {
+    function drawBoardGrid() { // ... (sin cambios)
         if (!ctx) return;
         ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
         ctx.fillStyle = 'white';
@@ -397,7 +419,7 @@
         }
     }
 
-    function drawSymbols() {
+    function drawSymbols() { // ... (sin cambios)
         if (!ctx || !board) return;
         const symbolPadding = CELL_SIZE * 0.2;
 
@@ -433,7 +455,7 @@
         }
     }
 
-    function drawWinningLine(combination) {
+    function drawWinningLine(combination) { // ... (sin cambios)
         if (!ctx || !combination || combination.length !== 3) return;
 
         const { x: startXOffset, y: startYOffset } = getCellOffset(combination[0]);
@@ -450,8 +472,8 @@
         ctx.stroke();
     }
 
-    // --- Game Logic Functions ---
     function subscribeToGameUpdates(gameId) {
+        // ... (sin cambios)
         if (gameRealtimeChannel) {
             gameRealtimeChannel.unsubscribe();
             gameRealtimeChannel = null;
@@ -468,10 +490,6 @@
                     console.log('Game update received via realtime:', payload);
                     const updatedGame = payload.new;
                     if (updatedGame && updatedGame.id === currentGameId) {
-                        // Solo actualiza si el juego actual es el que recibió la actualización
-                        // y si el cambio no fue originado por el jugador actual (para evitar doble procesamiento)
-                        // Esto último es difícil de determinar sin más info en el payload,
-                        // pero la actualización de estado debería ser idempotente.
                         console.log('Applying real-time update to current game data.');
                         initializeAndDisplayGame(updatedGame);
                     }
@@ -490,16 +508,17 @@
             });
     }
 
-    function unsubscribeFromGameUpdates() {
+    function unsubscribeFromGameUpdates() { // ... (sin cambios)
         if (gameRealtimeChannel) {
             console.log("Unsubscribing from game updates.");
-            supabaseClient.removeChannel(gameRealtimeChannel);
+            supabaseClient.removeChannel(gameRealtimeChannel); // Correct way to remove
             gameRealtimeChannel = null;
         }
     }
 
 
     async function initializeAndDisplayGame(gameData) {
+        // ... (sin cambios)
         if (!gameData) {
             alert("No se pudieron obtener los datos de la partida.");
             showAuthSection();
@@ -507,7 +526,7 @@
         }
 
         currentGameId = gameData.id;
-        currentGameData = gameData; // Actualiza con los datos más recientes
+        currentGameData = gameData; 
         board = [...gameData.board];
         currentPlayerIndex = gameData.current_player_index;
         isGameOver = gameData.is_game_over;
@@ -522,10 +541,10 @@
 
         if (isGameOver) {
             displayEndGameMessage();
-            unsubscribeFromGameUpdates(); // Ya no necesitamos actualizaciones si el juego terminó
+            unsubscribeFromGameUpdates(); 
         } else {
             updatePlayerTurnDisplay();
-            subscribeToGameUpdates(currentGameId); // Suscribirse a actualizaciones para esta partida
+            subscribeToGameUpdates(currentGameId); 
         }
 
         if (currentGameId) {
@@ -533,7 +552,7 @@
         }
     }
 
-    async function handleCanvasClick(event) {
+    async function handleCanvasClick(event) { // ... (sin cambios)
         if (isGameOver || !currentGameData || !currentUser || !ctx) return;
 
         const rect = canvas.getBoundingClientRect();
@@ -567,14 +586,7 @@
             alert("No es tu turno o no eres un jugador activo en esta partida.");
             return;
         }
-        // Esta condición puede ser redundante si la lógica de turnos es correcta
-        // if (currentGameData.players.length < 2 && currentPlayerInGame.symbol === 'X' && currentGameData.current_player_index === 1) {
-        //      alert("Esperando al jugador O.");
-        //      return;
-        // }
          if (currentGameData.players.length < 2 && currentUser.id !== currentGameData.players[0].user_id) {
-             // Esto es para el caso donde P2 intenta jugar antes de que su unión sea confirmada y el turno sea formalmente de P1.
-             // Sin embargo, la lógica de current_player_index y user_id debería cubrir esto.
              alert("Esperando que se una el segundo jugador o que la partida se actualice.");
              return;
          }
@@ -583,7 +595,6 @@
         if (board[cellIndex] !== '') return;
 
         const symbolToPlace = currentPlayerInGame.symbol;
-        // Optimistic update localmente primero
         board[cellIndex] = symbolToPlace;
         drawSymbols(); 
 
@@ -592,39 +603,33 @@
         let newWinningCombination = null;
 
         if (checkWin(symbolToPlace)) {
-            isGameOver = true; // Set local state first
+            isGameOver = true; 
             gameEnded = true;
             newWinnerIndex = currentGameData.current_player_index;
             winningCombinations.forEach(combination => {
                 if (combination.every(index => board[index] === symbolToPlace)) {
-                    newWinningCombination = combination; // Guardar combinación ganadora
+                    newWinningCombination = combination; 
                 }
             });
-            if(newWinningCombination) drawWinningLine(newWinningCombination); // Dibujar línea inmediatamente
+            if(newWinningCombination) drawWinningLine(newWinningCombination); 
         } else if (board.every(cell => cell !== '')) {
-            isGameOver = true; // Set local state first
+            isGameOver = true; 
             gameEnded = true;
         }
 
         const nextPlayerIndex = gameEnded ? currentGameData.current_player_index : (1 - currentGameData.current_player_index);
 
         const updates = {
-            board: [...board], // Enviar una copia del tablero actualizado
+            board: [...board], 
             current_player_index: nextPlayerIndex,
-            is_game_over: isGameOver, // Enviar el estado de finalización
+            is_game_over: isGameOver, 
             winner_index: newWinnerIndex,
             winning_combination: newWinningCombination,
         };
 
-        // Actualizar Supabase. La suscripción realtime se encargará de actualizar para el otro jugador.
-        // Y también para este jugador, lo que forzará una resincronización (initializeAndDisplayGame).
         const updatedGame = await updateGameOnSupabase(currentGameId, updates);
         if (updatedGame) {
-            // No es estrictamente necesario actualizar aquí si confías en la suscripción realtime
-            // pero puede ser bueno para la respuesta inmediata del jugador actual.
-            // initializeAndDisplayGame(updatedGame); // Esto ya se hará por la suscripción realtime si está activa
-            // Para evitar doble renderizado, podemos solo actualizar el estado local si no hay realtime
-            if (!gameRealtimeChannel) { // Si no hay realtime, actualiza manualmente
+            if (!gameRealtimeChannel) { 
                  currentGameData = updatedGame;
                  board = [...updatedGame.board];
                  currentPlayerIndex = updatedGame.current_player_index;
@@ -638,28 +643,24 @@
             }
         } else {
             alert("Error guardando el movimiento. Intentando revertir.");
-            // Revertir el movimiento local si Supabase falló
             board[cellIndex] = ''; 
-            isGameOver = false; // Revertir estado local
-            // Redibujar para quitar el símbolo y la línea ganadora si se dibujó
+            isGameOver = false; 
             drawBoardGrid(); 
             drawSymbols();
-            updatePlayerTurnDisplay(); // Volver al estado anterior del turno
+            updatePlayerTurnDisplay(); 
         }
     }
     
-    function updatePlayerTurnDisplay() {
+    function updatePlayerTurnDisplay() { // ... (sin cambios)
         if (!currentGameData || currentGameData.players.length === 0 || isGameOver) {
             playerTurnElement.classList.add('hidden');
             return;
         }
         playerTurnElement.classList.remove('hidden');
-        // Asegurarse de que current_player_index es válido
         if (currentGameData.current_player_index < 0 || currentGameData.current_player_index >= currentGameData.players.length) {
              console.warn("Índice de jugador actual inválido:", currentGameData.current_player_index, "Jugadores:", currentGameData.players.length);
-             // Podrías intentar mostrar un mensaje genérico o el del primer jugador como fallback
              if (currentGameData.players.length > 0) {
-                currentPlayerIndex = 0; // Fallback, aunque esto indica un problema de estado
+                currentPlayerIndex = 0; 
              } else {
                 currentPlayerName.textContent = "Esperando jugadores...";
                 currentPlayerImage.src = DEFAULT_IMAGE_URL;
@@ -667,7 +668,7 @@
              }
         }
 
-        const playerInfo = currentGameData.players[currentPlayerIndex]; // Usa el currentPlayerIndex local sincronizado
+        const playerInfo = currentGameData.players[currentPlayerIndex]; 
         if (!playerInfo) {
             currentPlayerName.textContent = "Desconocido";
             currentPlayerImage.src = DEFAULT_IMAGE_URL;
@@ -681,7 +682,7 @@
         currentPlayerImage.classList.add('active');
     }
 
-    function displayEndGameMessage() {
+    function displayEndGameMessage() { // ... (sin cambios)
         statusMessageContainer.innerHTML = '';
         statusMessageSpan = document.createElement('span');
         statusMessageContainer.appendChild(statusMessageSpan);
@@ -689,7 +690,6 @@
         playerTurnElement.classList.add('hidden');
 
         if (currentGameData && currentGameData.is_game_over) {
-            // Dibuja la línea ganadora si no se dibujó antes (por si la data vino de realtime)
             if (currentGameData.winning_combination) {
                  drawWinningLine(currentGameData.winning_combination);
             }
@@ -708,18 +708,18 @@
         }
     }
 
-    function checkWin(symbol) {
+    function checkWin(symbol) { // ... (sin cambios)
         return winningCombinations.some(combination => {
             return combination.every(index => board[index] === symbol);
         });
     }
 
-    async function resetGame() { // "Reset" ahora significa recargar desde el servidor
+    async function resetGame() { // ... (sin cambios)
         if (currentGameId) {
             alert("Recargando el estado actual de la partida desde el servidor.");
             const gameData = await fetchGameFromSupabase(currentGameId);
             if (gameData) {
-                 initializeAndDisplayGame(gameData); // Esto también se suscribirá de nuevo
+                 initializeAndDisplayGame(gameData); 
             } else {
                 alert("No se pudo recargar la partida. Volviendo a la selección.");
                 showAuthSection();
@@ -730,15 +730,15 @@
     }
 
     function showAuthSection() {
-        unsubscribeFromGameUpdates(); // Asegurarse de desuscribir al salir de una partida
+        console.log("showAuthSection called."); // DEBUG
+        unsubscribeFromGameUpdates();
         authSection.classList.remove('hidden');
         gameSection.classList.add('hidden');
         gameLinkMessage.textContent = '';
-        gameIdInput.value = ''; // Limpiar input de ID
+        gameIdInput.value = '';
         currentGameId = null;
         currentGameData = null;
-        // La lista de partidas abiertas se actualizará por checkUserSession o el callback de onAuthStateChange
-        if (currentUser) {
+        if (currentUser) { // Solo buscar si está autenticado
             fetchAndDisplayOpenGames();
         } else {
              openGamesListElement.innerHTML = '<p id="no-open-games" class="text-gray-500 text-center">Autentícate para ver partidas.</p>';
@@ -748,29 +748,32 @@
     }
 
     async function loadOrCreateGame() {
-        console.log("loadOrCreateGame triggered. Game ID input:", gameIdInput.value);
+        console.log("loadOrCreateGame triggered. Game ID input:", `"${gameIdInput.value}"`); // DEBUG
         if (!currentUser) {
             alert("Debes estar autenticado para crear o unirte a una partida.");
+            console.log("currentUser is null, returning from loadOrCreateGame. CurrentUser:", currentUser); // DEBUG
             return;
         }
+        console.log("loadOrCreateGame: currentUser is", currentUser.email); // DEBUG
 
         const gameIdToLoad = gameIdInput.value.trim();
         if (gameIdToLoad) {
+            console.log("Attempting to load game with ID:", gameIdToLoad); // DEBUG
             const gameData = await fetchGameFromSupabase(gameIdToLoad);
             if (gameData) {
+                console.log("Game data fetched for ID", gameIdToLoad, ":", gameData); // DEBUG
                 if (gameData.is_game_over) {
                     alert("Esta partida ya ha terminado. Mostrando resultado.");
                     initializeAndDisplayGame(gameData);
                     return;
                 }
-                // Verificar si el usuario ya es parte del juego
                 const isCurrentUserAPlayer = gameData.players.some(p => p.user_id === currentUser.id);
 
                 if (isCurrentUserAPlayer) {
-                    // El usuario ya es un jugador, cargar la partida
+                    console.log("User is already a player in this game. Initializing display."); // DEBUG
                     initializeAndDisplayGame(gameData);
                 } else if (gameData.players.length === 1) {
-                    // Hay un solo jugador y no es el actual, unirse como jugador 2
+                    console.log("Game has 1 player, current user is not player. Attempting to join."); // DEBUG
                     const player2 = {
                         user_id: currentUser.id,
                         name: currentUser.email.split('@')[0] || `JugadorO`,
@@ -778,49 +781,63 @@
                         imageUrl: DEFAULT_IMAGE_URL
                     };
                     const updatedPlayers = [...gameData.players, player2];
-                    // El turno debe ser del jugador 1 (índice 0) al iniciar.
-                    // Si ya había un movimiento del jugador 1, current_player_index podría ser 1.
-                    // Lo dejamos como está en gameData, la lógica de turnos debe manejarlo.
                     const updates = { players: updatedPlayers, current_player_index: gameData.current_player_index };
                     const updatedGame = await updateGameOnSupabase(gameData.id, updates);
                     if (updatedGame) {
+                        console.log("Successfully joined game. Initializing display.", updatedGame); // DEBUG
                         initializeAndDisplayGame(updatedGame);
                     } else {
                         alert("No se pudo unir a la partida como jugador 2.");
+                        console.error("Failed to join game as player 2."); // DEBUG
                     }
                 } else if (gameData.players.length >= 2) {
                     alert("Esta partida ya está llena. Puedes verla como espectador.");
-                    // Aquí podrías implementar un modo espectador si lo deseas
-                    initializeAndDisplayGame(gameData); // Carga como espectador
+                    console.log("Game is full. Initializing display as spectator."); // DEBUG
+                    initializeAndDisplayGame(gameData);
                 }
             } else {
                 alert(`No se encontró partida con ID: ${gameIdToLoad}. Puedes crear una nueva.`);
+                console.log(`Game with ID ${gameIdToLoad} not found.`); // DEBUG
                 gameIdInput.value = '';
             }
-        } else { // Crear nueva partida
+        } else { 
+            console.log("No game ID provided. Attempting to create a new game..."); // DEBUG
             const newGame = await createNewGameOnSupabase();
+            console.log("createNewGameOnSupabase returned:", newGame); // DEBUG
+
             if (newGame) {
+                console.log("New game created successfully, initializing display..."); // DEBUG
                 initializeAndDisplayGame(newGame);
-                gameIdInput.value = newGame.id; // Opcional: mostrar ID
-                await fetchAndDisplayOpenGames(); // Actualizar lista de partidas para otros
+                gameIdInput.value = newGame.id; 
+                await fetchAndDisplayOpenGames(); 
+                console.log("New game display initialized."); // DEBUG
+            } else {
+                console.error("Failed to create new game (newGame is null or undefined)."); // DEBUG
+                alert("Hubo un problema al crear la nueva partida. Revisa la consola para más detalles y verifica tus políticas RLS en Supabase.");
             }
         }
     }
 
     // --- Initialization ---
     document.addEventListener('DOMContentLoaded', () => {
+        console.log("DOMContentLoaded event fired."); // DEBUG
         if (!initializeSupabase()) {
             console.error("Fallo en la inicialización de Supabase. Funcionalidad limitada.");
-            return;
+            // No añadir listeners si supabase no inicializa
+            return; 
         }
         
-        // checkUserSession se llamará desde onAuthStateChange la primera vez
-        // y también maneja la carga desde URL si el usuario ya está autenticado
-
         if (signupButton) signupButton.addEventListener('click', handleSignUp);
         if (loginButton) loginButton.addEventListener('click', handleSignIn);
         if (logoutButton) logoutButton.addEventListener('click', handleSignOut);
-        if (createLoadGameButton) createLoadGameButton.addEventListener('click', loadOrCreateGame);
+        
+        if (createLoadGameButton) {
+            createLoadGameButton.addEventListener('click', loadOrCreateGame);
+            console.log("Event listener for createLoadGameButton ADDED."); // DEBUG
+        } else {
+            console.error("createLoadGameButton NOT FOUND in DOM."); // DEBUG
+        }
+
         if (resetButton) resetButton.addEventListener('click', resetGame);
         if (changePlayersButton) changePlayersButton.addEventListener('click', showAuthSection);
 
@@ -828,22 +845,20 @@
         const gameIdFromUrl = urlParams.get('game');
         if (gameIdFromUrl) {
             gameIdInput.value = gameIdFromUrl;
+            console.log("Game ID from URL params set in input:", gameIdFromUrl); // DEBUG
         }
 
         supabaseClient.auth.onAuthStateChange(async (event, session) => {
-            console.log("Auth state changed:", event, session ? "Session active" : "No session");
-            await checkUserSession(); // Revalida la sesión y actualiza la UI, incluyendo lista de partidas
+            console.log("Auth state changed:", event, session ? `Session for ${session.user.email}` : "No session"); // DEBUG
+            await checkUserSession();
 
             if (event === "SIGNED_IN" && session) {
                 const urlParamsOnSign = new URLSearchParams(window.location.search);
                 const gameIdFromUrlOnSignIn = urlParamsOnSign.get('game');
                 if (gameIdFromUrlOnSignIn && !currentGameId && createLoadGameButton && !createLoadGameButton.disabled) {
-                    console.log("Intentando cargar partida desde URL tras SIGNED_IN...");
-                    // gameIdInput.value ya debería estar seteado si vino de la URL
+                    console.log("Attempting to load game from URL after SIGNED_IN:", gameIdFromUrlOnSignIn); // DEBUG
                     await loadOrCreateGame();
                 }
-            } else if (event === "SIGNED_OUT") {
-                // showAuthSection ya se llama dentro de checkUserSession cuando no hay sesión
             }
         });
     });
